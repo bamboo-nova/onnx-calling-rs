@@ -25,35 +25,32 @@ impl YoloModel {
         let preprocess_image = preprocess(input_image, imgsz);
 
         // run forward pass and then convert result to f32
-        let forward = self.model.run(tvec![preprocess_image.to_owned().into()])?;
-        let results = forward[0].to_array_view::<f32>()?.view().t().into_owned();
+        let forward = self.model.run(tvec![preprocess_image.to_owned().into()]).unwrap();
+        // let results = forward[0].to_array_view::<f32>()?.view().t().into_owned();
+        // let results = forward[0].to_array_view::<f32>()?.view().into_owned();
+        // println!("{:?}", results);
+        let output = forward.get(0).unwrap().to_array_view::<f32>().unwrap().view().t().into_owned();
 
-        // process results
+        // process results(reference: https://github.com/AndreyGermanov/yolov8_onnx_rust/blob/main/src/main.rs)
         let mut bboxes: Vec<Bbox> = vec![];
-        for i in 0..results.len_of(tract_ndarray::Axis(0)) {
-            let row = results.slice(s![i, .., ..]);
-
-            let row_1d = row.index_axis(Axis(0), 0);         // (例えば row.shape() == [1, 85] のとき)
-            let class_scores = row_1d.slice(s![4..]);
-            let (class_id, confidence) = class_scores
-                .iter()
-                .enumerate()
-                .fold((0, 0.0), |(best_idx, best_score), (idx, &score)| {
-                    if score > best_score {
-                        (idx, score)
-                    } else {
-                        (best_idx, best_score)
-                    }
-                });
-
-            if confidence >= confidence_threshold {
-                let x = row[[0, 0]];
-                let y = row[[1, 0]];
-                let w = row[[2, 0]];
-                let h = row[[3, 0]];
-                let bbox = Bbox::new(x, y, w, h, confidence, class_id.to_string());
-                bboxes.push(bbox);
+        let output = output.slice(s![..,..,0]);
+        for row in output.axis_iter(Axis(0)) {
+            println("{:?}", row);
+            let row:Vec<_> = row.iter().map(|x| *x).collect();
+            let (class_id, confidence) = row.iter().skip(4).enumerate()
+                .map(|(index,value)| (index,*value))
+                .reduce(|accum, row| if row.1>accum.1 { row } else {accum}).unwrap();
+            if confidence < confidence_threshold {
+                continue
             }
+
+            // if confidence >= confidence_threshold {
+            let x = row[0] / imgsz as f32;
+            let y = row[1] / imgsz as f32;
+            let w = row[2] / imgsz as f32;
+            let h = row[3] / imgsz as f32;
+            let bbox = Bbox::new(x, y, w, h, confidence, class_id.to_string());
+            bboxes.push(bbox);
         }
         // Ok(nms_boxes(bboxes))
         Ok(bboxes)

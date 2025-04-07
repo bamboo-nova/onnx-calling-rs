@@ -1,5 +1,5 @@
 [package]
-name = "onnx-calling"
+name = "onnxcalling"
 version = "0.1.0"
 edition = "2021"
 
@@ -18,3 +18,7 @@ tract-onnx = "0.21.11"
 [[bin]]
 name = "sample"
 path = "src/sample.rs"
+
+[[bin]]
+name = "main"
+path = "src/main.rs"

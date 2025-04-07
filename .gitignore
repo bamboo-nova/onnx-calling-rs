@@ -17,3 +17,6 @@ target/
 #.idea/
 
 *.onnx
+*.jpg
+*.png
+*.jpeg

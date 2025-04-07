@@ -11,10 +11,6 @@ pub struct Args {
     #[arg(value_name = "SOURCE", help = "source image path")]
     pub source: String,
 
-    /// class yaml path
-    #[arg(value_name = "CLASSES", help = "yaml config path")]
-    pub class_config: String,
-
     /// Confidence threshold.
     #[arg(short='c', long="conf-threshold", default_value="0.3")]
     pub conf_threshold: f32,
