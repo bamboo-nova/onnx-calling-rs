@@ -2,6 +2,7 @@ use anyhow::{Error, Result};
 use image::DynamicImage;
 //use std::cmp::Ordering;
 //use std::cmp::PartialOrd;
+use std::collections::HashMap;
 use tract_core::plan::SimplePlan;
 use tract_ndarray::{s, Axis};
 use tract_onnx::prelude::*;
@@ -19,7 +20,8 @@ impl YoloModel {
         input_image: &DynamicImage,
         confidence_threshold: f32,
         iou_threhold: f32,
-        imgsz: u32
+        imgsz: u32,
+        class_maps: HashMap<String, String>,
     ) -> Result<Vec<Bbox>, Error> {
         // Preprocess
         let preprocess_image = preprocess(input_image, imgsz);
@@ -35,7 +37,6 @@ impl YoloModel {
         let mut bboxes: Vec<Bbox> = vec![];
         let output = output.slice(s![..,..,0]);
         for row in output.axis_iter(Axis(0)) {
-            println("{:?}", row);
             let row:Vec<_> = row.iter().map(|x| *x).collect();
             let (class_id, confidence) = row.iter().skip(4).enumerate()
                 .map(|(index,value)| (index,*value))
@@ -49,7 +50,11 @@ impl YoloModel {
             let y = row[1] / imgsz as f32;
             let w = row[2] / imgsz as f32;
             let h = row[3] / imgsz as f32;
-            let bbox = Bbox::new(x, y, w, h, confidence, class_id.to_string());
+            let class_name = class_maps
+                .get(&class_id.to_string())
+                .unwrap_or(&"unknown".to_string())
+                .clone();
+            let bbox = Bbox::new(x, y, w, h, confidence, class_name);
             bboxes.push(bbox);
         }
         // Ok(nms_boxes(bboxes))
