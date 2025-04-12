@@ -10,7 +10,7 @@ mod onnx_metadata;
 
 use args::Args;
 use yolo::YoloModel;
-use crate::yolo::load_yolo_model;
+use crate::yolo::{load_yolo_model, letterbox};
 use crate::onnx_metadata::get_class_ids;
 
 type MyResult<T> = Result<T, Box<dyn Error>>;
@@ -37,6 +37,7 @@ pub fn get_args() -> MyResult<Config> {
 #[allow(deprecated)]
 pub fn run(config: Config) -> MyResult<()> {
     let image = image::open(config.source)?;
+    let original_image = image.clone();
 
     let yolo_model: YoloModel = load_yolo_model(&config.model_hash, (640, 640));
     let class_maps = get_class_ids(config.model_hash)?;
@@ -48,5 +49,11 @@ pub fn run(config: Config) -> MyResult<()> {
         class_maps,
     )?;
     println!("{:?}", results);
+    let resized_image = letterbox(&image, 640);
+    for (i, mut result) in results.into_iter().enumerate() {
+        let mut crop_image = result.crop_bbox(&resized_image)?;
+        let mut save_path = format!("output_{}.jpg", i.to_string());
+        crop_image.save(save_path).unwrap();
+    }
     Ok(())
 }

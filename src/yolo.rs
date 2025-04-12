@@ -1,13 +1,14 @@
 use anyhow::{Error, Result};
 use image::DynamicImage;
-//use std::cmp::Ordering;
-//use std::cmp::PartialOrd;
+use image::GenericImageView;
+use std::cmp::Ordering;
+use std::cmp::PartialOrd;
 use std::collections::HashMap;
 use tract_core::plan::SimplePlan;
 use tract_ndarray::{s, Axis};
 use tract_onnx::prelude::*;
 
-use crate::bbox_struct::Bbox;
+use crate::bbox_struct::{Bbox, Xyxy};
 
 #[allow(clippy::type_complexity)]
 pub struct YoloModel {
@@ -19,7 +20,7 @@ impl YoloModel {
         &self,
         input_image: &DynamicImage,
         confidence_threshold: f32,
-        iou_threhold: f32,
+        iou_threshold: f32,
         imgsz: u32,
         class_maps: HashMap<String, String>,
     ) -> Result<Vec<Bbox>, Error> {
@@ -28,9 +29,6 @@ impl YoloModel {
 
         // run forward pass and then convert result to f32
         let forward = self.model.run(tvec![preprocess_image.to_owned().into()]).unwrap();
-        // let results = forward[0].to_array_view::<f32>()?.view().t().into_owned();
-        // let results = forward[0].to_array_view::<f32>()?.view().into_owned();
-        // println!("{:?}", results);
         let output = forward.get(0).unwrap().to_array_view::<f32>().unwrap().view().t().into_owned();
 
         // process results(reference: https://github.com/AndreyGermanov/yolov8_onnx_rust/blob/main/src/main.rs)
@@ -54,11 +52,16 @@ impl YoloModel {
                 .get(&class_id.to_string())
                 .unwrap_or(&"unknown".to_string())
                 .clone();
-            let bbox = Bbox::new(x, y, w, h, confidence, class_name);
+            // 推論結果は640x640で行われているので、元の画像でやるとズレる
+            // xywhnの元になった画像サイズにすること(入力画像とは限らないので)
+            let bbox = Bbox::new(
+                x, y, w, h,
+                confidence, class_name,
+                imgsz, imgsz,
+            );
             bboxes.push(bbox);
         }
-        // Ok(nms_boxes(bboxes))
-        Ok(bboxes)
+        Ok(nms_boxes(bboxes, iou_threshold))
     }
 }
 
@@ -75,9 +78,7 @@ pub fn load_yolo_model(model_path: &str, input_size: (u32, u32)) -> YoloModel {
     YoloModel { model: pred_model }
 }
 
-/// Resize the image with black padding for keeping aspect ratio.
-/// This preprocess is equal to letterbox processing in ultralytics utils.
-fn preprocess(input_image: &DynamicImage, target_size: u32) -> Tensor {
+pub fn letterbox(input_image: &DynamicImage, target_size: u32) -> DynamicImage {
     let img_width = input_image.width();
     let img_height = input_image.height();
     let scale = (target_size / (img_width.max(img_height))) as f32;
@@ -100,6 +101,13 @@ fn preprocess(input_image: &DynamicImage, target_size: u32) -> Tensor {
         (target_size - update_width) as i64 / 2,
         (target_size - update_height) as i64 / 2,
     );
+    DynamicImage::ImageRgb8(padded)
+}
+
+/// Resize the image with black padding for keeping aspect ratio.
+/// This preprocess is equal to letterbox processing in ultralytics utils.
+fn preprocess(input_image: &DynamicImage, target_size: u32) -> Tensor {
+    let padded = letterbox(input_image, target_size);
     
     // Convert tract tensor.
     // (Batch, Channel, Height, Width)
@@ -111,5 +119,36 @@ fn preprocess(input_image: &DynamicImage, target_size: u32) -> Tensor {
     image
 }
 
+fn nms_boxes(mut boxes: Vec<Bbox>, iou_threshold: f32) -> Vec<Bbox> {
+    // Sort confidence as descending.
+    boxes.sort_by(|a, b| b.conf.partial_cmp(&a.conf).unwrap_or(Ordering::Equal));
 
+    let mut keep = Vec::new();
+    while let Some(current) = boxes.pop() {
+        keep.push(current.clone());
+        boxes.retain(|b| calculate_iou(&current.xyxy, &b.xyxy) <= iou_threshold);
+    }
+    keep
+}
+
+pub fn calculate_iou(box1: &Xyxy, box2: &Xyxy) -> f32 {
+    let x1 = box1.x1.max(box2.x1);
+    let y1 = box1.y1.max(box2.y1);
+    let x2 = box1.x2.min(box2.x2);
+    let y2 = box1.y2.min(box2.y2);
+
+    let intersection_width = x2.saturating_sub(x1);
+    let intersection_height = y2.saturating_sub(y1);
+    let intersection = (intersection_width as f32) * (intersection_height as f32);
+
+    let area1 = (box1.x2.saturating_sub(box1.x1) as f32) * (box1.y2.saturating_sub(box1.y1) as f32);
+    let area2 = (box2.x2.saturating_sub(box2.x1) as f32) * (box2.y2.saturating_sub(box2.y1) as f32);
+    let union = area1 + area2 - intersection;
+
+    if union == 0.0 {
+        0.0
+    } else {
+        intersection / union
+    }
+}
 
