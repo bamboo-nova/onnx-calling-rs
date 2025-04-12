@@ -19,6 +19,15 @@ pub struct Xywhn {
     pub h: f32,
 }
 
+impl Xywhn {
+    pub fn is_normalized(&self) -> bool {
+        self.x >= 0.0 && self.x <= 1.0 &&
+        self.y >= 0.0 && self.y <= 1.0 &&
+        self.w >= 0.0 && self.w <= 1.0 &&
+        self.h >= 0.0 && self.h <= 1.0
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct Xyxy {
     /// xyxy format.
@@ -31,11 +40,21 @@ pub struct Xyxy {
 impl Bbox {
     pub fn new(x: f32, y: f32, w: f32, h: f32, conf: f32, cls: String, width: u32, height: u32) -> Bbox {
         let bbox_xyxy = Bbox::xywhn2xyxy(x, y, w, h, width as f32, height as f32);
-        Bbox { 
-            xywhn: Xywhn { x, y, w, h },
-            xyxy: Xyxy { x1: bbox_xyxy[0], y1: bbox_xyxy[1], x2: bbox_xyxy[2], y2: bbox_xyxy[3]},
-            conf,
-            cls,
+        let xywhn = Xywhn { x, y, w, h };
+        if xywhn.is_normalized() {
+            Bbox { 
+                xywhn,
+                xyxy: Xyxy { x1: bbox_xyxy[0], y1: bbox_xyxy[1], x2: bbox_xyxy[2], y2: bbox_xyxy[3]},
+                conf,
+                cls,
+            }
+        } else {
+            Bbox { 
+                xywhn: Xywhn {x: 0.0, y: 0.0, w: 0.0, h: 0.0},
+                xyxy: Xyxy { x1: 0, y1: 0, x2: 0, y2: 0},
+                conf,
+                cls,
+            }
         }
     }
 
@@ -64,5 +83,22 @@ impl Bbox {
             bbox_width,
             bbox_height,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_xywhn2xyxy() {
+        let xyxy = Bbox::xywhn2xyxy(0.5, 0.5, 0.2, 0.4, 100.0, 100.0);
+        assert_eq!(xyxy, vec![40, 30, 60, 70]);
+    }
+
+    #[test]
+    fn test_is_normalized() {
+        let xywhn = Xywhn {x: 0.2, y: 0.3, w: 0.1, h: 0.1};
+        assert!(xywhn.is_normalized());
     }
 }

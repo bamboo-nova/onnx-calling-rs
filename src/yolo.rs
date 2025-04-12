@@ -81,28 +81,33 @@ pub fn load_yolo_model(model_path: &str, input_size: (u32, u32)) -> YoloModel {
 pub fn letterbox(input_image: &DynamicImage, target_size: u32) -> DynamicImage {
     let img_width = input_image.width();
     let img_height = input_image.height();
-    let scale = (target_size / (img_width.max(img_height))) as f32;
 
-    // Resize for keeping aspect ratio.
-    let update_width = (img_width as f32 * scale) as u32;
-    let update_height = (img_height as f32 * scale) as u32;
+    // スケールは短辺基準ではなく「長辺を target_size にフィット」
+    let scale = target_size as f32 / img_width.max(img_height) as f32;
+    let new_width = (img_width as f32 * scale).round() as u32;
+    let new_height = (img_height as f32 * scale).round() as u32;
+
+    // リサイズされた画像
     let resized = image::imageops::resize(
         &input_image.to_rgb8(),
-        update_width,
-        update_height,
+        new_width,
+        new_height,
         image::imageops::FilterType::Triangle,
     );
 
-    // Define black image and replace resized image into that.
-    let mut padded = image::RgbImage::new(target_size, target_size);
-    image::imageops::replace(
-        &mut padded,
-        &resized,
-        (target_size - update_width) as i64 / 2,
-        (target_size - update_height) as i64 / 2,
-    );
-    DynamicImage::ImageRgb8(padded)
+    // target_size の正方形キャンバスを作成
+    let mut canvas = image::RgbImage::from_pixel(target_size, target_size, image::Rgb([0, 0, 0]));
+
+    // 貼り付けオフセット（中央）
+    let x_offset = ((target_size as i32 - new_width as i32) / 2).max(0) as u32;
+    let y_offset = ((target_size as i32 - new_height as i32) / 2).max(0) as u32;
+
+    // リサイズ画像を中央に貼り付け
+    image::imageops::replace(&mut canvas, &resized, x_offset as i64, y_offset as i64);
+
+    DynamicImage::ImageRgb8(canvas)
 }
+
 
 /// Resize the image with black padding for keeping aspect ratio.
 /// This preprocess is equal to letterbox processing in ultralytics utils.
@@ -152,3 +157,72 @@ pub fn calculate_iou(box1: &Xyxy, box2: &Xyxy) -> f32 {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{DynamicImage, GenericImageView, Rgba};
+
+    /// helper function to generate a dummy image.
+    fn create_dummy_image(width: u32, height: u32, color: [u8; 4]) -> DynamicImage {
+        let mut img = image::ImageBuffer::from_pixel(width, height, Rgba(color));
+        DynamicImage::ImageRgba8(img)
+    }
+
+    #[test]
+    fn test_letter_box() {
+        let dummy = create_dummy_image(128, 32, [100,0,0,200]);
+        let target_size = 64;
+        let letterboxed = letterbox(&dummy, target_size);
+
+        println!("{:?}", letterboxed);
+
+        assert_eq!(letterboxed.width(), 64);
+        assert_eq!(letterboxed.height(), 64);
+
+        // 上部はパディングされてるか
+        let top_pixel = letterboxed.get_pixel(0, 0);
+        assert_eq!(top_pixel[0], 0);
+        assert_eq!(top_pixel[1], 0);
+        assert_eq!(top_pixel[2], 0);
+
+        // 中央はパディングされてないはず
+        let center_pixel = letterboxed.get_pixel(32, 32);
+        println!("{:?}", center_pixel);
+        assert_eq!(center_pixel[0], 100);
+        assert_eq!(center_pixel[1], 0);
+        assert_eq!(center_pixel[2], 0);
+    }
+
+    #[test]
+    fn test_nms_bboxes() {
+        let example1 = [
+            Bbox::new(
+                0.3, 0.5, 0.1, 0.1,
+                0.5, "car".to_string(),
+                640, 640,
+            ),
+            Bbox::new(
+                0.3, 0.5, 0.1, 0.1,
+                0.5, "car".to_string(),
+                640, 640,
+            ),
+        ].to_vec();
+        let results = nms_boxes(example1, 0.7);
+        assert_eq!(results.len(), 1);
+
+        let example1 = [
+            Bbox::new(
+                0.3, 0.5, 0.1, 0.1,
+                0.5, "car".to_string(),
+                640, 640,
+            ),
+            Bbox::new(
+                0.4, 0.7, 0.1, 0.1,
+                0.5, "car".to_string(),
+                640, 640,
+            ),
+        ].to_vec();
+        let results = nms_boxes(example1, 0.7);
+        assert_eq!(results.len(), 2); 
+    }
+}
